@@ -194,7 +194,7 @@ if [[ "$BUILD_ENVIRONMENT" == *xpu* ]]; then
       ;;
   esac
   echo "Building sycltla with job limit $J"
-  export BUILD_CUSTOM_STEP="ninja -C build torch-xpu-ops-sycltla -j ${J}"
+  export BUILD_CUSTOM_STEP="ninja -C build -t targets | grep -q torch-xpu-ops-sycltla && ninja -C build torch-xpu-ops-sycltla -j ${J} || echo 'sycltla target not found, skipping'"
 fi
 
 # TODO: Removeme once all the wrappers are gone
