@@ -1,19 +1,15 @@
 # Owner(s): ["module: rocm"]
-# Unneeded for CI: trunk.yml covers the same ROCm testing.
-# Kept in-repo for metrics; auto-triggers below are commented out.
-# workflow_dispatch remains for manual runs.
+# DEBUG (badpod-scan): neutered to scan the gfx950.2 pool for the broken-KFD-
+# topology failure and validate the distributed RCCL pre-flight gate's fast-fail
+# path. No build -- the test pulls a prebuilt trunk wheel from S3 (see
+# _rocm-test.yml "Download build artifacts"). DO NOT MERGE.
 name: rocm-mi350
 
 on:
-  #push:
-  #  tags:
-  #    - ciflow/rocm-mi350/*
   workflow_dispatch:
-  #schedule:
-  #  - cron: 29 8 * * *  # about 1:29am PDT
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref_name }}-${{ github.ref_type == 'branch' && github.sha }}-${{ github.event_name == 'workflow_dispatch' }}-${{ github.event_name == 'schedule' }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref_name }}-${{ github.ref_type == 'branch' && github.sha }}-${{ github.event_name == 'workflow_dispatch' }}
   cancel-in-progress: true
 
 permissions:
@@ -22,50 +18,27 @@ permissions:
   actions: read
 
 jobs:
-  target-determination:
+  # Fan out N identical distributed shards on the gfx950.2 pool. Each lands on a
+  # different ARC ephemeral pod, so one dispatch is N chances to hit a pod with
+  # the broken KFD topology and watch the pre-flight gate fail fast (seconds)
+  # instead of the shard hanging. `attempt` only makes the matrix entries
+  # distinct. config=distributed so the pre-flight gate fires.
+  scan:
     if: github.repository_owner == 'pytorch'
-    name: before-test
-    uses: ./.github/workflows/target_determination.yml
-
-  get-label-type:
-    name: get-label-type
-    uses: pytorch/pytorch/.github/workflows/_runner-determinator.yml@main
-    if: ${{ (github.event_name != 'schedule' || github.repository == 'pytorch/pytorch') && github.repository_owner == 'pytorch' }}
+    name: gfx950.2-badpod-scan
+    uses: ./.github/workflows/_rocm-test.yml
     with:
-      triggering_actor: ${{ github.triggering_actor }}
-      issue_owner: ${{ github.event.pull_request.user.login || github.event.issue.user.login }}
-      curr_branch: ${{ github.head_ref || github.ref_name }}
-      curr_ref_type: ${{ github.ref_type }}
-      check_experiments: amd-do
-
-  linux-noble-rocm-py3_12-build:
-    if: ${{ (github.event_name != 'schedule' || github.repository == 'pytorch/pytorch') && github.repository_owner == 'pytorch' }}
-    name: linux-noble-rocm-py3.12-mi350
-    uses: ./.github/workflows/_linux-build.yml
-    needs: get-label-type
-    with:
-      runner_prefix: ""
-      build-environment: linux-noble-rocm-py3.12-mi350
-      docker-image-name: ci-image:pytorch-linux-noble-rocm-n-py3
+      build-environment: linux-jammy-rocm-py3.10-mi350
+      docker-image: ci-image:pytorch-linux-jammy-rocm-n-py3
       test-matrix: |
         { include: [
-          { config: "default", shard: 1, num_shards: 6, runner: "${{ needs.get-label-type.outputs.amd-do-label-type }}linux.rocm.gpu.gfx950.1" },
-          { config: "default", shard: 2, num_shards: 6, runner: "${{ needs.get-label-type.outputs.amd-do-label-type }}linux.rocm.gpu.gfx950.1" },
-          { config: "default", shard: 3, num_shards: 6, runner: "${{ needs.get-label-type.outputs.amd-do-label-type }}linux.rocm.gpu.gfx950.1" },
-          { config: "default", shard: 4, num_shards: 6, runner: "${{ needs.get-label-type.outputs.amd-do-label-type }}linux.rocm.gpu.gfx950.1" },
-          { config: "default", shard: 5, num_shards: 6, runner: "${{ needs.get-label-type.outputs.amd-do-label-type }}linux.rocm.gpu.gfx950.1" },
-          { config: "default", shard: 6, num_shards: 6, runner: "${{ needs.get-label-type.outputs.amd-do-label-type }}linux.rocm.gpu.gfx950.1" },
+          { config: "distributed", shard: 1, num_shards: 1, runner: "amd-do-linux.rocm.gpu.gfx950.2", attempt: 1 },
+          { config: "distributed", shard: 1, num_shards: 1, runner: "amd-do-linux.rocm.gpu.gfx950.2", attempt: 2 },
+          { config: "distributed", shard: 1, num_shards: 1, runner: "amd-do-linux.rocm.gpu.gfx950.2", attempt: 3 },
+          { config: "distributed", shard: 1, num_shards: 1, runner: "amd-do-linux.rocm.gpu.gfx950.2", attempt: 4 },
+          { config: "distributed", shard: 1, num_shards: 1, runner: "amd-do-linux.rocm.gpu.gfx950.2", attempt: 5 },
+          { config: "distributed", shard: 1, num_shards: 1, runner: "amd-do-linux.rocm.gpu.gfx950.2", attempt: 6 },
+          { config: "distributed", shard: 1, num_shards: 1, runner: "amd-do-linux.rocm.gpu.gfx950.2", attempt: 7 },
+          { config: "distributed", shard: 1, num_shards: 1, runner: "amd-do-linux.rocm.gpu.gfx950.2", attempt: 8 },
         ]}
-    secrets: inherit
-
-  linux-noble-rocm-py3_12-test:
-    name: linux-noble-rocm-py3.12-mi350
-    uses: ./.github/workflows/_rocm-test.yml
-    needs:
-      - linux-noble-rocm-py3_12-build
-      - target-determination
-    with:
-      build-environment: ${{ needs.linux-noble-rocm-py3_12-build.outputs.build-environment }}
-      docker-image: ${{ needs.linux-noble-rocm-py3_12-build.outputs.docker-image }}
-      test-matrix: ${{ needs.linux-noble-rocm-py3_12-build.outputs.test-matrix }}
     secrets: inherit
