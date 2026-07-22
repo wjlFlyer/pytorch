@@ -39,7 +39,7 @@ from torch.distributed.elastic.utils.logging import get_logger
 from torch.numa.binding import NumaOptions
 
 
-__all__ = ["LaunchConfig", "elastic_launch", "launch_agent"]
+__all__ = ["LaunchConfig", "elastic_launch", "launch_agent", "register_addr_and_port_handler"]
 
 logger = get_logger(__name__)
 
@@ -222,13 +222,26 @@ def _get_entrypoint_name(entrypoint: Callable | str | None, args: list[Any]) -> 
         return ""
 
 
-def _get_addr_and_port(
+# A dict holding get_addr_and_port implementations for different backends
+_addr_and_port_handler: dict[str, Callable[[RendezvousParameters], tuple[str | None, int | None]]] = {}
+
+def register_addr_and_port_handler(
+    backend: str,
+    handler: Callable[[RendezvousParameters], tuple[str | None, int | None]],
+) -> None:
+    """Register an address and port retrieval handler for a given backend."""
+    if backend in _addr_and_port_handler:
+        raise RuntimeError(
+            f"Handler for '{backend}' already registered in _addr_and_port_handler."
+        )
+    _addr_and_port_handler[backend] = handler
+
+
+def _static_get_addr_and_port(
     rdzv_parameters: RendezvousParameters,
 ) -> tuple[str | None, int | None]:
-    if rdzv_parameters.backend != "static":
-        return (None, None)
-    endpoint = rdzv_parameters.endpoint
-    endpoint = endpoint.strip()
+    """Address/port handler for the static backend"""
+    endpoint = rdzv_parameters.endpoint.strip()
     if not endpoint:
         raise ValueError(
             "Endpoint is missing in endpoint. Try to add --master-addr and --master-port"
@@ -239,6 +252,26 @@ def _get_addr_and_port(
             f"port is missing in endpoint: {endpoint}. Try to specify --master-port"
         )
     return (master_addr, master_port)
+
+
+def _default_get_addr_and_port(
+    rdzv_parameters: RendezvousParameters,
+) -> tuple[str | None, int | None]:
+    """Default handler, returns None"""
+    return (None, None)
+
+
+register_addr_and_port_handler("static", _static_get_addr_and_port)
+register_addr_and_port_handler("default", _default_get_addr_and_port)
+
+
+def _get_addr_and_port(
+    rdzv_parameters: RendezvousParameters,
+) -> tuple[str | None, int | None]:
+    handler = _addr_and_port_handler.get(rdzv_parameters.backend)
+    if handler is not None:
+        return handler(rdzv_parameters)
+    return _addr_and_port_handler["default"](rdzv_parameters)
 
 
 def launch_agent(

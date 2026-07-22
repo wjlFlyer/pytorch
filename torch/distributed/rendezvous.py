@@ -19,7 +19,7 @@ from .constants import default_pg_timeout
 
 _rendezvous_handlers: dict[str, Callable[..., Iterator[tuple[Store, int, int]]]] = {}
 
-__all__ = ["register_rendezvous_handler", "rendezvous"]
+__all__ = ["register_rendezvous_handler", "rendezvous", "register_rendezvous_url_hook"]
 
 
 def register_rendezvous_handler(scheme, handler):
@@ -70,7 +70,28 @@ def _get_use_libuv_from_query_dict(query_dict: dict[str, str]) -> bool:
     return query_dict.get("use_libuv", os.environ.get("USE_LIBUV", "1")) == "1"
 
 
+_rendezvous_url_hooks: list[Callable[[str], str]] = []
+
+def register_rendezvous_url_hook(hook_fn: Callable[[str], str]) -> None:
+    """
+    Register a rendezvous URL hook function.
+
+    Before a rendezvous URL is dispatched to its handler, all registered
+    hook functions are applied to the URL in registration order. This allows
+    third-party libraries to customize the URL without monkey-patching.
+
+    Args:
+        hook_fn: A function that takes the original URL string and returns
+            a (possibly modified) URL string.
+    """
+    if hook_fn not in _rendezvous_url_hooks:
+        _rendezvous_url_hooks.append(hook_fn)
+
+
 def _rendezvous_helper(url: str, rank: int, world_size_opt: int | None, **kwargs):
+    # Apply all registered URL hook functions before parsing the URL
+    for hook_fn in _rendezvous_url_hooks:
+        url = hook_fn(url)
     result = urlparse(url)
     if world_size_opt is None:
         world_size = -1
